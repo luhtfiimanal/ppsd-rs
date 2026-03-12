@@ -1,0 +1,24 @@
+[package]
+name = "ppsd-rs"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Seismic PPSD (Probabilistic Power Spectral Density) computation matching ObsPy output"
+repository = "https://github.com/luhtfiimanal/ppsd-rs"
+readme = "README.md"
+keywords = ["seismic", "psd", "ppsd", "obspy", "fdsn"]
+categories = ["science", "mathematics"]
+exclude = ["pyscripts/", "CLAUDE.md", "PROMPT.md"]
+
+[dependencies]
+num-complex = "0.4"
+realfft = "3"
+stationxml-rs = "0.2"
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = "1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

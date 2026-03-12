@@ -1,0 +1,22 @@
+# Rust
+/target
+
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+
+# Environment
+.env
+.env.*
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
