@@ -86,6 +86,14 @@ pub enum PpsdError {
     /// A digital stage has no decimation info (needed for DTFT sample rate).
     #[error("stage {0} has FIR/Coefficients but no decimation info")]
     MissingDecimation(u32),
+
+    /// A digital stage has a non-positive or NaN sample rate.
+    ///
+    /// Guards against silent NaN propagation through the DTFT inner loop, which
+    /// would otherwise occur when `input_sample_rate` is `0.0`, negative, or NaN
+    /// (`f / 0.0 = ±Inf`, `cos/sin(±Inf) = NaN`).
+    #[error("stage {0} has invalid sample rate (must be finite and > 0)")]
+    InvalidSampleRate(u32),
 }
 
 /// Result type for ppsd operations.
@@ -342,12 +350,18 @@ pub fn eval_response(response: &Response, freqs: &[f64]) -> Result<Vec<f64>> {
             eval_paz(pz, gain, stage.number, freqs)?
         } else if let Some(fir) = &stage.fir {
             let fs = stage_sample_rate(stage).ok_or(PpsdError::MissingDecimation(stage.number))?;
+            if !fs.is_finite() || fs <= 0.0 {
+                return Err(PpsdError::InvalidSampleRate(stage.number));
+            }
             eval_fir(fir, gain, fs, freqs)
         } else if let Some(coeffs) = &stage.coefficients {
             match coeffs.cf_transfer_function_type {
                 CfTransferFunction::Digital => {
                     let fs = stage_sample_rate(stage)
                         .ok_or(PpsdError::MissingDecimation(stage.number))?;
+                    if !(fs > 0.0) {
+                        return Err(PpsdError::InvalidSampleRate(stage.number));
+                    }
                     dtft_power_normalized(&coeffs.numerators, gain, fs, freqs)
                 }
                 CfTransferFunction::AnalogRadians | CfTransferFunction::AnalogHertz => {
@@ -701,7 +715,7 @@ pub fn process_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stationxml_rs::{Decimation, PoleZero, PolesZeros, StageGain};
+    use stationxml_rs::{Coefficients, Decimation, PoleZero, PolesZeros, StageGain};
     use std::path::PathBuf;
 
     fn test_vectors_dir() -> PathBuf {
@@ -1074,6 +1088,116 @@ mod tests {
                 freqs[i]
             );
         }
+    }
+
+    // -- Sample-rate validation guards --
+
+    fn make_units() -> stationxml_rs::Units {
+        stationxml_rs::Units {
+            name: "COUNTS".into(),
+            description: None,
+        }
+    }
+
+    fn fir_stage_with_sample_rate(sample_rate: f64) -> ResponseStage {
+        ResponseStage {
+            number: 1,
+            stage_gain: Some(StageGain {
+                value: 1.0,
+                frequency: 1.0,
+            }),
+            poles_zeros: None,
+            coefficients: None,
+            fir: Some(FIR {
+                input_units: make_units(),
+                output_units: make_units(),
+                symmetry: Symmetry::None,
+                numerator_coefficients: vec![0.25, 0.5, 0.25],
+            }),
+            decimation: Some(Decimation {
+                input_sample_rate: sample_rate,
+                factor: 1,
+                offset: 0,
+                delay: 0.0,
+                correction: 0.0,
+            }),
+        }
+    }
+
+    fn digital_coeffs_stage_with_sample_rate(sample_rate: f64) -> ResponseStage {
+        ResponseStage {
+            number: 1,
+            stage_gain: Some(StageGain {
+                value: 1.0,
+                frequency: 1.0,
+            }),
+            poles_zeros: None,
+            fir: None,
+            coefficients: Some(Coefficients {
+                input_units: make_units(),
+                output_units: make_units(),
+                cf_transfer_function_type: CfTransferFunction::Digital,
+                numerators: vec![0.25, 0.5, 0.25],
+                denominators: vec![],
+            }),
+            decimation: Some(Decimation {
+                input_sample_rate: sample_rate,
+                factor: 1,
+                offset: 0,
+                delay: 0.0,
+                correction: 0.0,
+            }),
+        }
+    }
+
+    #[test]
+    fn test_eval_response_rejects_zero_sample_rate_fir() {
+        let response = Response {
+            instrument_sensitivity: None,
+            stages: vec![fir_stage_with_sample_rate(0.0)],
+        };
+        let freqs = vec![0.1, 0.5, 1.0];
+        let err = eval_response(&response, &freqs).unwrap_err();
+        assert!(
+            matches!(err, PpsdError::InvalidSampleRate(1)),
+            "expected InvalidSampleRate(1), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_eval_response_rejects_negative_sample_rate_fir() {
+        let response = Response {
+            instrument_sensitivity: None,
+            stages: vec![fir_stage_with_sample_rate(-100.0)],
+        };
+        let freqs = vec![0.1, 0.5, 1.0];
+        let err = eval_response(&response, &freqs).unwrap_err();
+        assert!(matches!(err, PpsdError::InvalidSampleRate(1)));
+    }
+
+    #[test]
+    fn test_eval_response_rejects_nan_sample_rate_fir() {
+        let response = Response {
+            instrument_sensitivity: None,
+            stages: vec![fir_stage_with_sample_rate(f64::NAN)],
+        };
+        let freqs = vec![0.1, 0.5, 1.0];
+        let err = eval_response(&response, &freqs).unwrap_err();
+        assert!(matches!(err, PpsdError::InvalidSampleRate(1)));
+    }
+
+    #[test]
+    fn test_eval_response_rejects_zero_sample_rate_coefficients() {
+        let response = Response {
+            instrument_sensitivity: None,
+            stages: vec![digital_coeffs_stage_with_sample_rate(0.0)],
+        };
+        let freqs = vec![0.1, 0.5, 1.0];
+        let err = eval_response(&response, &freqs).unwrap_err();
+        assert!(
+            matches!(err, PpsdError::InvalidSampleRate(1)),
+            "expected InvalidSampleRate(1), got {err:?}"
+        );
     }
 
     // -- Full PSD with FIR --
