@@ -359,7 +359,7 @@ pub fn eval_response(response: &Response, freqs: &[f64]) -> Result<Vec<f64>> {
                 CfTransferFunction::Digital => {
                     let fs = stage_sample_rate(stage)
                         .ok_or(PpsdError::MissingDecimation(stage.number))?;
-                    if !(fs > 0.0) {
+                    if !fs.is_finite() || fs <= 0.0 {
                         return Err(PpsdError::InvalidSampleRate(stage.number));
                     }
                     dtft_power_normalized(&coeffs.numerators, gain, fs, freqs)
@@ -1044,7 +1044,7 @@ mod tests {
         let expected_db = json_option_f64_matrix(&data, "psd_values_db");
         let step = (seg_len as f64 * (1.0 - overlap)) as usize;
 
-        for seg_idx in 0..n_segments {
+        for (seg_idx, expected_seg) in expected_db.iter().enumerate().take(n_segments) {
             let start = seg_idx * step;
             let segment = &input_data[start..start + seg_len];
 
@@ -1060,7 +1060,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_psd_match(&result, &expected_db[seg_idx], seg_idx, "PAZ-only");
+            assert_psd_match(&result, expected_seg, seg_idx, "PAZ-only");
         }
     }
 
@@ -1229,7 +1229,7 @@ mod tests {
         assert!(n_segments > 0, "expected at least 1 segment in test vector");
         let step = (seg_len as f64 * (1.0 - overlap)) as usize;
 
-        for seg_idx in 0..n_segments {
+        for (seg_idx, expected_seg) in expected_db.iter().enumerate().take(n_segments) {
             let start = seg_idx * step;
             let segment = &input_data[start..start + seg_len];
 
@@ -1245,7 +1245,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_psd_match(&result, &expected_db[seg_idx], seg_idx, "PAZ+FIR");
+            assert_psd_match(&result, expected_seg, seg_idx, "PAZ+FIR");
         }
     }
 }
